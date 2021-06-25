@@ -9,23 +9,14 @@ import pandas as pd
 import matplotlib.pyplot as plt
 import seaborn as sns
 import numpy as np
-from sklearn.metrics._ranking import _binary_clf_curve
 from sklearn.linear_model import LogisticRegression
-from sklearn.metrics import confusion_matrix,classification_report, precision_score, recall_score, accuracy_score
-from sklearn.model_selection import train_test_split
-from sklearn.metrics import average_precision_score
-from sklearn.metrics import precision_recall_curve
-from sklearn.metrics import plot_precision_recall_curve
-from sklearn.tree import DecisionTreeClassifier
+from sklearn.metrics import confusion_matrix,classification_report, precision_score, recall_score, accuracy_score, average_precision_score, precision_recall_curve, plot_precision_recall_curve, roc_curve, auc
 from sklearn.metrics import mean_squared_error as MSE
+from sklearn.metrics._ranking import _binary_clf_curve
+from sklearn.model_selection import train_test_split
+from sklearn.tree import DecisionTreeClassifier
 from sklearn.ensemble import RandomForestRegressor,RandomForestClassifier
-from sklearn.metrics import roc_curve, auc
 from sklearn.preprocessing import StandardScaler, MinMaxScaler, FunctionTransformer
-from sklearn.decomposition import PCA
-
-# level for the radical indicators: application/docdb/inpadoc
-level_list = ['docdb','inpadoc']
-level = 0
 
 # lists with control variables
 controls = ['applt_cnt', 'invt_cnt','nr_bw_cites', 'nr_npl_cites', 'nr_claims', 'nr_ipc4', 'nr_ipc6'] 
@@ -45,17 +36,24 @@ nf_corr = ['nf4_corr', 'nf6_corr']
 nto_all = nto_dummy + nto_count + nto_corr
 nso_all = nso_dummy + nso_count + nso_corr
 nf_all = nf_dummy + nf_count + nf_corr
-new_rad = ['top_avg_md_sd3']
 
-rad_dumm = nto_dummy + nso_dummy + nf_dummy #+ new_rad
-rad_count = nto_count + nso_count + nf_count #+ new_rad
-rad_corr = nto_corr + nso_corr + nf_corr #+new_rad
-rad_all = nto_all + nso_all + nf_all #+ new_rad
+rad_dumm = nto_dummy + nso_dummy + nf_dummy
+rad_count = nto_count + nso_count + nf_count
+rad_corr = nto_corr + nso_corr + nf_corr
+rad_all = nto_all + nso_all + nf_all
 
-scalable = controls + existing_exante + nto_count + nso_count + nf_count + new_rad
+scalable = controls + existing_exante + nto_count + nso_count + nf_count
     
+# Functions
+
 def load_df(level):
-    """ Laods and returns the desired dataset (docdb/inpadoc) """
+    """Laods and returns the desired dataset. 
+    Parameter: level is a string and takes the values 'docdb' or 'inpadoc'
+    """
+    if level not in ['docdb','inpadoc']:
+        print("""Unrecognized value for level. Valid values are 'docdb' or 'inpadoc'""")
+        return
+    
     df = pd.read_csv('01_biotech_val_data_{}.csv'.format(level))
     
     return df
@@ -186,6 +184,9 @@ def roc_curve(y_true, y_score, pos_label=None, sample_weight=None,
     return fpr, tpr, thresholds
 
 def benchmark_plot():
+    """
+    Plots the scores from the benchmark analysis (performance of RFC vs baseline LC)
+    """
     df = pd.DataFrame.from_records([['Baseline']*4+['RFC']*4,
                                     ['Recall','Precision','Average precision','AUC']*2,
                                     [0.174,0.872,0.297,0.587,0.693,1.000,0.872,0.847]], index=['Model','Indicator','Value']).T
@@ -198,6 +199,10 @@ def benchmark_plot():
     plt.tight_layout()
     
 def eda_1():
+    """
+    Performs the first step of the exploratory data analysis: descriptive statistics by patent (sub)groups
+    """
+    
     for i in ['nto4','nso4','nf4','nto6','nso6','nf6']:
         df.loc[df['{}_count'.format(i)]==0,'{}_count_cat'.format(i)] = '0'
         df.loc[df['{}_count'.format(i)]>0,'{}_count_cat'.format(i)] = '1-3'
@@ -220,6 +225,9 @@ def eda_1():
     plt.tight_layout()
     
 def bt_rates():
+    """
+    Produces a table with the descriptive stats from the first step of the EDA
+    """
     ### Table with breakthrough rates
     print('Table 1. Breakthrough rate for subsets with different scores of NTO4, NSO4 and NF4')
     pd.options.display.float_format = '{:,.3f}'.format
@@ -231,6 +239,10 @@ def bt_rates():
         
 
 def eda_2():
+    """
+    Performs the second step of the exploratory data analysis: descriptive statistics by groups of patents that score in multiple indicators
+    """
+    
     df['comp_dum4'] = df['nto4'] + df['nso4'] + df['nf4']
     df['comp_dum4'] = df['nto4'] + df['nso4'] + df['nf4']
     df.loc[df['nto4_count'] + df['nso4_count'] + df['nf4_count']==0,'comp_dum4_cat'] = '0'
@@ -250,20 +262,33 @@ def eda_2():
     fig.subplots_adjust(top=0.8)
     plt.tight_layout()
     
-def model(rad_levels, features_order, feature_names, model_features, cutoff=.5, scaler='MinMaxScaler', plot=True, label='important', penalty='l2', condensed=True, solver='liblinear',lambda_=1, l1_ratio=None):
+def model(rad_levels, features_order, feature_names, model_features,
+          cutoff=.5, scaler='MinMaxScaler', plot=True, label='important', penalty='l2',
+          condensed=True, solver='liblinear',lambda_=1, l1_ratio=None):
+
+    """
+    Loads the required dataset (docdb/inpadoc), a set of features and model hyperparameters and trains logistic classifiers for each model.
+    The function produces a 1x2 plot with the AUC curves of the models and their precision-recall curves
+    
+    Returns
+    -------
+    outcomes_df: a Pandas df with characteristics and quality scores of each estimated model 
+    """
+    
     global plots, outc
     
     if all(item in ['appln','docdb','inpadoc'] for item in rad_levels)==False:
         print("""Unrecognized value for rad_levels. Valid values are 'appln','docdb' and 'inpadoc'""")
         return    
    
-    if 'StandardScaler' not in ['StandardScaler','MinMaxScaler']:
+    if scaler not in ['StandardScaler','MinMaxScaler']:
         print("""Unrecognized value for scaler. Valid values are None, 'MinMaxScaler' and 'StandardScaler'""")
         return
 
     outcomes = []
     
-    scalers = {'MinMaxScaler':MinMaxScaler(),'StandardScaler':StandardScaler()}
+    scalers = {'MinMaxScaler':MinMaxScaler(),
+               'StandardScaler':StandardScaler()}
     
     m=0
     
@@ -345,7 +370,13 @@ def model(rad_levels, features_order, feature_names, model_features, cutoff=.5, 
         
     return outcomes_df
 
-def train_test_validation(level='inpadoc', penalty='l2', solver='liblinear', lambda_=1, random_state=150, scaler='MinMaxScaler'):
+def train_test_validation(level='inpadoc', penalty='l2', solver='liblinear',
+                          lambda_=1, random_state=150, scaler='MinMaxScaler'):
+
+    """
+    Loads the required dataset (docdb/inpadoc), performs train/test split, trains a LC on the train set and predicts on test set data; calculates quality scores
+    Produces a 1x2 plot with the AUC curve and precision-recall curves of the model ran on train and test subsets
+    """
     
     if scaler not in [None,'MinMaxScaler','StandardScaler']:
         return print('Valor de scaler incorrecto. Scalers posibles son None, MinMaxScaler o StandarScaler')
@@ -420,6 +451,17 @@ def train_test_validation(level='inpadoc', penalty='l2', solver='liblinear', lam
     #return res
 
 def rfc_1(level):
+    """
+    Loads the required dataset (docdb/inpadoc), performs train/test split, trains a RFC, calculates model scores using predictions from the test set.
+    Plots the precision-recall curve using test set data
+    
+    Returns
+    -------
+    rf: a RegressionTreeClassifier fitted on the training set
+    
+    X_colnames: list with the names of the model features
+    """
+
     df = load_df(level)
     df['patage'] = df['appy'] - df['appy'].min()
     list_ipc4 = [x for x in df.columns if x[:6]=='ipc4__']
@@ -477,6 +519,9 @@ def rfc_1(level):
     return rf, X_colnames
 
 def rfc_2(fitted_rfc, X_colnames):
+    """
+    Takes a fitted RegressionTreeClassifier and a list with feature names. Extracts the top 30 most important features and plots them in a barplot
+    """
     # most important features
     feature_imp = pd.Series(fitted_rfc.feature_importances_,index=X_colnames).sort_values(ascending=False)
     feature_imp2 = feature_imp[:30]
