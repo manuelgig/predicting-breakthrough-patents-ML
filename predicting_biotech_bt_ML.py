@@ -10,13 +10,14 @@ import matplotlib.pyplot as plt
 import seaborn as sns
 import numpy as np
 from sklearn.linear_model import LogisticRegression
-from sklearn.metrics import confusion_matrix,classification_report, precision_score, recall_score, accuracy_score, average_precision_score, precision_recall_curve, plot_precision_recall_curve, roc_curve, auc
+from sklearn.metrics import precision_score, recall_score, accuracy_score, average_precision_score, plot_precision_recall_curve, auc
 from sklearn.metrics import mean_squared_error as MSE
 from sklearn.metrics._ranking import _binary_clf_curve
 from sklearn.model_selection import train_test_split
-from sklearn.tree import DecisionTreeClassifier
-from sklearn.ensemble import RandomForestRegressor,RandomForestClassifier
+from sklearn.ensemble import RandomForestClassifier
 from sklearn.preprocessing import StandardScaler, MinMaxScaler, FunctionTransformer
+from sklearn.exceptions import UndefinedMetricWarning
+import warnings
 
 # lists with control variables
 controls = ['applt_cnt', 'invt_cnt','nr_bw_cites', 'nr_npl_cites', 'nr_claims', 'nr_ipc4', 'nr_ipc6'] 
@@ -293,11 +294,8 @@ def model(rad_levels, features_order, feature_names, model_features,
     m=0
     
     if plot==True:
-        models  = []
         
         fig, axs = plt.subplots(1, 2,figsize=(12,5))
-        st = fig.suptitle('Figure 4. Model comparison (regularization={}, lambda={})'.format(penalty,lambda_), fontsize="x-large")
-        #st.set_y(0.90)
         
         axs[0].plot([0, 1], [0, 1], 'k--')
         axs[0].set_xlabel('False Positive Rate')
@@ -311,7 +309,6 @@ def model(rad_levels, features_order, feature_names, model_features,
         df = load_df(level)
         y = df[label]
         df['patage'] = df['appy'] - df['appy'].min()
-        list_ipc4 = [x for x in df.columns if x[:6]=='ipc4__']
         df = df.merge(pd.get_dummies(df['appy']), left_index=True,right_index=True)
         
         transformer = FunctionTransformer(np.log1p, validate=True)
@@ -332,7 +329,7 @@ def model(rad_levels, features_order, feature_names, model_features,
             lis = []
             
             model_desc = vect
-            model_desc = model_desc + ['No' if level=='docdb' else 'Yes'.format(level) for level in [level]]
+            model_desc = model_desc + ['No' if level=='docdb' else 'Yes' for level in [level]]
 
             for i in range(len(vect)):
                 if vect[i]:
@@ -430,7 +427,6 @@ def train_test_validation(level='inpadoc', penalty='l2', solver='liblinear',
     y_pred_prob = logreg.predict_proba(X_test)[:,1]
     fpr, tpr, thresholds = roc_curve(y_test, y_pred_prob)        
     fig, axs = plt.subplots(1, 2,figsize=(12,5))
-    st = fig.suptitle('Figure 5. Model 3 - Train/test validation split (regularization={}, lambda={})'.format(penalty,lambda_), fontsize="x-large")
     axs[0].plot([0, 1], [0, 1], 'k--')
     axs[0].set_xlabel('False Positive Rate')
     axs[0].set_ylabel('True Positive Rate')
@@ -439,7 +435,6 @@ def train_test_validation(level='inpadoc', penalty='l2', solver='liblinear',
     plot_precision_recall_curve(logreg,X_test,y_test, ax=axs[1])        
     axs[1].set_title('2-class Precision-Recall curve')
     
-    m=1
     y_pred_prob = logreg.predict_proba(X_train)[:,1]
     fpr, tpr, thresholds = roc_curve(y_train, y_pred_prob)        
     axs[0].plot(fpr, tpr, label='Train set')
@@ -472,10 +467,7 @@ def rfc_1(level):
     
     random_state=20
     X_train, X_test, y_train, y_test = train_test_split(X, y, test_size = 0.3, random_state=random_state)      
-    
-    scaler='MinMaxScaler'
-    scalers = {'MinMaxScaler':MinMaxScaler(),'StandardScaler':StandardScaler()}
-    
+       
     rf = RandomForestClassifier(n_estimators=20, random_state=random_state, max_depth=25, max_features=30, min_samples_leaf=1, criterion='entropy')
     rf.fit(X_train,y_train)
     
@@ -484,9 +476,6 @@ def rfc_1(level):
     
     y_test_pred = rf.predict(X_test)
     y_train_pred = rf.predict(X_train)
-    rmse_test = MSE(y_test,y_test_pred)**(1/2)
-    rmse_train = MSE(y_train,y_train_pred)**(1/2)
-    #print(rmse_train,rmse_test)
     
     y_score = rf.predict_proba(X_test)[:,1]
     average_precision_test = average_precision_score(y_test, y_score)
